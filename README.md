@@ -32,9 +32,13 @@ Kết quả gồm các trường:
 
 ## Cài đặt trên Windows PowerShell
 
-B1: Di chuyển vào thư mục dự án
+Di chuyển vào thư mục dự án:
 
-B2: Tạo môi trường ảo và cài thư viện
+```powershell
+cd "C:\Users\HP\Desktop\tuan2\my_issue_triage"
+```
+
+Tạo môi trường ảo và cài thư viện:
 
 ```powershell
 py -m venv .venv
