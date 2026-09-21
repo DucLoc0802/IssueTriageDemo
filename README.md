@@ -28,14 +28,14 @@ Kết quả gồm các trường:
 - Gemini API key;
 - model Gemini hỗ trợ function calling và structured output.
 
-Ứng dụng hiện sử dụng model `gemini-3.6-flash`, được khai báo trong `btvn.py`.
+Ứng dụng mặc định sử dụng model `gemini-3.6-flash`. Có thể đổi model bằng biến `GEMINI_MODEL` trong `.env`.
 
 ## Cài đặt trên Windows PowerShell
 
 Di chuyển vào thư mục dự án:
 
 ```powershell
-cd "C:\Users\HP\Desktop\tuan2\my_issue_triage"
+cd "C:\Users\HP\Desktop\tuan2"
 ```
 
 Tạo môi trường ảo và cài thư viện:
@@ -48,10 +48,11 @@ py -m venv .venv
 
 ## Cấu hình
 
-Tạo file `.env` trong cùng thư mục với `btvn.py`:
+Tạo file `.env` trong cùng thư mục với `App.py`:
 
 ```dotenv
 GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-3.6-flash
 ```
 
 Không commit `.env` hoặc API key lên Git hay chia sẻ công khai. File này đã được loại trừ trong `.gitignore`.
@@ -59,7 +60,7 @@ Không commit `.env` hoặc API key lên Git hay chia sẻ công khai. File này
 ## Chạy ứng dụng
 
 ```powershell
-& ".\.venv\Scripts\python.exe" -m streamlit run ".\btvn.py"
+& ".\.venv\Scripts\python.exe" -m streamlit run ".\App.py"
 ```
 
 Sau đó mở địa chỉ Streamlit hiển thị trong terminal, mặc định là:
@@ -69,15 +70,6 @@ http://localhost:8501
 ```
 
 Nhấn `Ctrl+C` trong terminal để dừng ứng dụng.
-
-## Chạy bằng môi trường ảo hiện có
-
-Nếu tiếp tục dùng môi trường `issue triage\.venv` nằm cạnh thư mục dự án, chạy từ thư mục `tuan2` bằng lệnh:
-
-```powershell
-& ".\issue triage\.venv\Scripts\python.exe" -m pip install -r ".\my_issue_triage\requirements.txt"
-& ".\issue triage\.venv\Scripts\python.exe" -m streamlit run ".\my_issue_triage\btvn.py"
-```
 
 ## Lỗi thường gặp
 
@@ -93,19 +85,19 @@ Không cài package có tên `google`; SDK được dự án sử dụng là `go
 
 ### `missing ScriptRunContext`
 
-Lỗi này xảy ra khi chạy `python btvn.py`. Hãy khởi động ứng dụng bằng `python -m streamlit run btvn.py` như hướng dẫn phía trên.
+Lỗi này xảy ra khi chạy `python App.py`. Hãy khởi động ứng dụng bằng `python -m streamlit run App.py` như hướng dẫn phía trên.
 
 ### Không tìm thấy API key
 
-Kiểm tra file `.env` nằm cùng thư mục với `btvn.py` và có biến `GEMINI_API_KEY` hợp lệ.
+Kiểm tra file `.env` nằm cùng thư mục với `App.py` và có biến `GEMINI_API_KEY` hợp lệ.
 
 ## Cấu trúc dự án
 
 ```text
-my_issue_triage/
+Tuan2/
 ├── .env                 # API key, không commit
 ├── .gitignore
-├── btvn.py              # Logic workflow và giao diện Streamlit
+├── App.py               # Logic workflow và giao diện Streamlit
 ├── README.md
 └── requirements.txt
 ```

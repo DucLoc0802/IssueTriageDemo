@@ -1,13 +1,25 @@
+from __future__ import annotations
+
 import json
+import os
+from pathlib import Path
+from typing import Any, Literal
+
 import streamlit as st
 from dotenv import load_dotenv
 from google import genai
-from pydantic import BaseModel, Field
-from typing import Literal
+from pydantic import BaseModel, ConfigDict, Field
 
-load_dotenv()
+
+APP_DIR = Path(__file__).resolve().parent
+load_dotenv(APP_DIR / ".env")
+
 
 class IssueTriage(BaseModel):
+    """Kết quả phân loại cuối cùng mà Gemini bắt buộc phải trả về."""
+
+    model_config = ConfigDict(extra="forbid")
+
     summary: str = Field(description="Tóm tắt issue trong một câu")
     severity: Literal["P0", "P1", "P2", "P3"]
     component: Literal["payment", "identity", "search"]
@@ -15,22 +27,25 @@ class IssueTriage(BaseModel):
     reason: str = Field(description="Lý do chọn severity và component")
     suggested_action: str = Field(description="Hành động tiếp theo được đề xuất")
 
+
 COMPONENT_OWNERS = {
     "payment": "checkout-platform",
     "identity": "identity-platform",
-    "search": "search-platform"
+    "search": "search-platform",
 }
 
-def get_component_owner(component: str):
+
+def get_component_owner(component: str) -> dict[str, str]:
     if component not in COMPONENT_OWNERS:
         raise ValueError(f"Component không hợp lệ: {component}")
 
     return {
         "component": component,
-        "owner": COMPONENT_OWNERS[component]
+        "owner": COMPONENT_OWNERS[component],
     }
 
-get_component_owner_tool = {
+
+GET_COMPONENT_OWNER_TOOL = {
     "type": "function",
     "name": "get_component_owner",
     "description": "Tìm team chịu trách nhiệm cho một component phần mềm.",
@@ -39,23 +54,19 @@ get_component_owner_tool = {
         "properties": {
             "component": {
                 "type": "string",
-                "enum": ["payment", "identity", "search"]
+                "enum": list(COMPONENT_OWNERS),
             }
         },
-        "required": ["component"]
-    }
+        "required": ["component"],
+        "additionalProperties": False,
+    },
 }
 
-available_functions = {
-    "get_component_owner": get_component_owner
+AVAILABLE_FUNCTIONS = {
+    "get_component_owner": get_component_owner,
 }
 
-available_tools = [
-    get_component_owner_tool
-]
-
-INSTRUCTION = """
-Bạn là trợ lý phân loại issue phần mềm.
+INSTRUCTION = """Bạn là trợ lý phân loại issue phần mềm.
 
 Nhiệm vụ:
 - xác định severity theo P0/P1/P2/P3;
@@ -72,171 +83,154 @@ Nhiệm vụ:
 - P3: lỗi nhỏ, ít ảnh hưởng hoặc chủ yếu liên quan trải nghiệm.
 """
 
-def execute_tool(function_call):
-    function = available_functions.get(function_call.name)
 
+def execute_tool(function_call: Any) -> dict[str, Any]:
+    """Kiểm tra yêu cầu của model trước khi thực thi hàm Python."""
+
+    function = AVAILABLE_FUNCTIONS.get(function_call.name)
     if function is None:
-        return {
-            "success": False,
-            "error": f"Unknown tool: {function_call.name}"
-        }
+        raise ValueError(f"Tool không được hỗ trợ: {function_call.name}")
+
+    arguments = dict(function_call.arguments or {})
+    if set(arguments) != {"component"}:
+        raise ValueError("Tool phải nhận đúng một tham số component.")
+
+    return function(**arguments)
+
+
+def run_triage(issue: str) -> tuple[IssueTriage, list[dict[str, Any]]]:
+    """Chạy function calling, structured output và validation đầu-cuối."""
+
+    issue = issue.strip()
+    if not issue:
+        raise ValueError("Mô tả issue không được để trống.")
+
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        raise RuntimeError("Thiếu GEMINI_API_KEY hoặc GOOGLE_API_KEY trong file .env.")
+
+    model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip()
+    if not model:
+        raise RuntimeError("GEMINI_MODEL không được để trống.")
+
+    client = genai.Client(api_key=api_key)
+    trace: list[dict[str, Any]] = []
 
     try:
-        result = function(**function_call.arguments)
+        interaction = client.interactions.create(
+            model=model,
+            system_instruction=INSTRUCTION,
+            input=issue,
+            tools=[GET_COMPONENT_OWNER_TOOL],
+            generation_config={"tool_choice": "any"},
+        )
 
-        return {
-            "success": True,
-            "data": result
-        }
+        function_call = next(
+            (step for step in interaction.steps if step.type == "function_call"),
+            None,
+        )
+        if function_call is None:
+            raise RuntimeError("Model không gọi get_component_owner.")
 
-    except Exception as error:
-        return {
-            "success": False,
-            "error": str(error)
-        }
+        arguments = dict(function_call.arguments or {})
+        trace.append(
+            {
+                "stage": "tool_call",
+                "data": {"name": function_call.name, "arguments": arguments},
+            }
+        )
+        trace.append(
+            {
+                "stage": "application executes",
+                "data": "Ứng dụng kiểm tra tên tool và arguments rồi thực thi hàm Python.",
+            }
+        )
 
-def run_triage(issue: str):
-    client = genai.Client()
-    trace = []
+        tool_data = execute_tool(function_call)
+        trace.append({"stage": "tool_result", "data": tool_data})
 
-    interaction = client.interactions.create(
-        model="gemini-3.6-flash",
-        system_instruction=INSTRUCTION,
-        input=issue,
-        tools=available_tools,
-        generation_config={
-            "tool_choice": "any"
-        }
-    )
-
-    function_call = None
-
-    for step in interaction.steps:
-        if step.type == "function_call":
-            function_call = step
-            break
-
-    if function_call is None:
-        raise RuntimeError("Model không gọi tool.")
-
-    trace.append({
-        "stage": "tool_call",
-        "data": {
+        function_result = {
+            "type": "function_result",
             "name": function_call.name,
-            "arguments": function_call.arguments
+            "call_id": function_call.id,
+            "result": [
+                {
+                    "type": "text",
+                    "text": json.dumps(tool_data, ensure_ascii=False),
+                }
+            ],
         }
-    })
 
-    trace.append({
-        "stage": "application executes",
-        "data": "Application kiểm tra tên tool, arguments và tự thực thi Python function."
-    })
-
-    result = execute_tool(function_call)
-
-    trace.append({
-        "stage": "tool_result",
-        "data": result
-    })
-
-    if not result["success"]:
-        raise ValueError(f"Tool chạy thất bại: {result['error']}")
-
-    function_result = {
-        "type": "function_result",
-        "name": function_call.name,
-        "call_id": function_call.id,
-        "result": [
-            {
-                "type": "text",
-                "text": json.dumps(result, ensure_ascii=False)
-            }
-        ]
-    }
-
-    final_interaction = client.interactions.create(
-        model="gemini-3.6-flash",
-        input=[function_result],
-        previous_interaction_id=interaction.id,
-        response_format=[
-            {
-                "type": "text",
-                "mime_type": "application/json",
-                "schema": IssueTriage.model_json_schema()
-            }
-        ]
-    )
-
-    triage = IssueTriage.model_validate_json(
-        final_interaction.output_text
-    )
-
-    tool_data = result["data"]
-
-    if triage.component != tool_data["component"]:
-        raise ValueError(
-            "Component của final response không khớp tool result."
+        final_interaction = client.interactions.create(
+            model=model,
+            input=[function_result],
+            previous_interaction_id=interaction.id,
+            response_format=[
+                {
+                    "type": "text",
+                    "mime_type": "application/json",
+                    "schema": IssueTriage.model_json_schema(),
+                }
+            ],
         )
 
-    if triage.owner != tool_data["owner"]:
-        raise ValueError(
-            "Owner của final response không khớp tool result."
-        )
+        if not final_interaction.output_text:
+            raise RuntimeError("Model không trả về kết quả cuối cùng.")
 
-    trace.append({
-        "stage": "final response",
-        "data": triage.model_dump()
-    })
+        triage = IssueTriage.model_validate_json(final_interaction.output_text)
 
-    return triage, trace
+        if triage.component != tool_data["component"]:
+            raise ValueError("Component của kết quả cuối không khớp tool result.")
+        if triage.owner != tool_data["owner"]:
+            raise ValueError("Owner của kết quả cuối không khớp tool result.")
 
-st.set_page_config(
-    page_title="Issue Triage",
-    layout="wide"
-)
+        trace.append({"stage": "final response", "data": triage.model_dump()})
+        return triage, trace
+    finally:
+        client.close()
 
-st.title("Issue Triage Mini-App")
-st.caption("Structured Output · Function Calling · Application Validation")
 
-issue = st.text_area(
-    "Mô tả issue",
-    value="Nút thanh toán trả HTTP 500 với mọi thẻ Visa từ 14:30.",
-    height=150
-)
+def render_app() -> None:
+    st.set_page_config(page_title="Issue Triage", layout="wide")
+    st.title("Issue Triage Mini-App")
+    st.caption("Structured Output · Function Calling · Application Validation")
 
-if st.button(
-    "Phân loại issue",
-    type="primary",
-    use_container_width=True
-):
+    issue = st.text_area(
+        "Mô tả issue",
+        value="Nút thanh toán trả HTTP 500 với mọi thẻ Visa từ 14:30.",
+        height=150,
+    )
+
+    if not st.button("Phân loại issue", type="primary", use_container_width=True):
+        return
+
     if not issue.strip():
         st.warning("Hãy nhập mô tả issue.")
+        return
 
-    else:
-        try:
-            with st.spinner("Đang phân loại issue..."):
-                triage, trace = run_triage(issue.strip())
+    try:
+        with st.spinner("Đang phân loại issue..."):
+            triage, trace = run_triage(issue)
 
-            st.success("Phân loại và validate thành công.")
+        st.success("Phân loại và validate thành công.")
+        left, right = st.columns(2)
 
-            left, right = st.columns(2)
+        with left:
+            st.subheader("IssueTriage")
+            st.json(triage.model_dump())
 
-            with left:
-                st.subheader("IssueTriage")
-                st.json(triage.model_dump())
+        with right:
+            st.subheader("Workflow Trace")
+            for index, item in enumerate(trace, start=1):
+                with st.expander(f"{index}. {item['stage']}", expanded=True):
+                    if isinstance(item["data"], dict):
+                        st.json(item["data"])
+                    else:
+                        st.write(item["data"])
+    except Exception as error:
+        st.error(f"Không chạy được: {error}")
+        st.info("Kiểm tra API key, model trong .env và kết nối Internet.")
 
-            with right:
-                st.subheader("Workflow Trace")
 
-                for index, item in enumerate(trace, start=1):
-                    with st.expander(
-                        f"{index}. {item['stage']}",
-                        expanded=True
-                    ):
-                        if isinstance(item["data"], dict):
-                            st.json(item["data"])
-                        else:
-                            st.write(item["data"])
-
-        except Exception as error:
-            st.error(f"Không chạy được: {error}")
+if __name__ == "__main__":
+    render_app()
