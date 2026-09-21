@@ -32,13 +32,9 @@ Kết quả gồm các trường:
 
 ## Cài đặt trên Windows PowerShell
 
-Di chuyển vào thư mục dự án:
+B1: Di chuyển vào thư mục dự án
 
-```powershell
-cd "C:\Users\HP\Desktop\tuan2"
-```
-
-Tạo môi trường ảo và cài thư viện:
+B2: Tạo môi trường ảo và cài thư viện
 
 ```powershell
 py -m venv .venv
@@ -54,8 +50,6 @@ Tạo file `.env` trong cùng thư mục với `App.py`:
 GEMINI_API_KEY=your_gemini_api_key_here
 GEMINI_MODEL=gemini-3.6-flash
 ```
-
-Không commit `.env` hoặc API key lên Git hay chia sẻ công khai. File này đã được loại trừ trong `.gitignore`.
 
 ## Chạy ứng dụng
 
@@ -94,10 +88,10 @@ Kiểm tra file `.env` nằm cùng thư mục với `App.py` và có biến `GEM
 ## Cấu trúc dự án
 
 ```text
-Tuan2/
-├── .env                 # API key, không commit
+IssueTriage/
+├── .env
 ├── .gitignore
-├── App.py               # Logic workflow và giao diện Streamlit
+├── App.py
 ├── README.md
 └── requirements.txt
 ```
